@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.session
+*.session-journal
+
+# Data artifacts
+data/logs/*.log
+data/backups/*
+data/exports/*
+
+# IDE
+.vscode/
