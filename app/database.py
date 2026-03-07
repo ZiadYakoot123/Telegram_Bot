@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Integer, String, Text, UniqueConstraint, func, select
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Integer, String, Text, UniqueConstraint, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -117,6 +117,28 @@ class OperationLog(Base):
     status: Mapped[str] = mapped_column(String(32), index=True)  # success|failed|info
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class WelcomeMessage(Base):
+    __tablename__ = "welcome_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content: Mapped[str] = mapped_column(Text)
+    media_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CustomAutoReply(Base):
+    __tablename__ = "custom_auto_replies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    keyword: Mapped[str] = mapped_column(String(255), index=True)
+    reply_text: Mapped[str] = mapped_column(Text)
+    media_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    media_type: Mapped[str | None] = mapped_column(String(16), nullable=True)  # image|video
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Database:
@@ -269,6 +291,91 @@ class Database:
             "received_messages": int(received_count or 0),
             "known_users": int(users_count or 0),
         }
+
+    async def reset_stats(self) -> None:
+        async with self.session() as session:
+            await session.execute(delete(MessageLog))
+            await session.execute(delete(InteractionLog))
+            await session.execute(delete(UserProfile))
+
+    async def clear_word_corpus(self) -> None:
+        async with self.session() as session:
+            await session.execute(
+                update(InteractionLog)
+                .where(InteractionLog.message_text.is_not(None))
+                .values(message_text=None)
+            )
+
+    async def list_usernames(self) -> list[str]:
+        async with self.session() as session:
+            rows = await session.execute(
+                select(UserProfile.username)
+                .where(UserProfile.username.is_not(None), UserProfile.username != "")
+                .order_by(UserProfile.username.asc())
+            )
+            usernames = [str(item).strip() for item in rows.scalars() if item and str(item).strip()]
+
+        deduplicated = sorted(set(usernames), key=str.lower)
+        return deduplicated
+
+    async def add_welcome_message(self, content: str, media_path: str | None = None) -> None:
+        async with self.session() as session:
+            session.add(WelcomeMessage(content=content, media_path=media_path))
+
+    async def delete_welcome_message(self, message_id: int) -> bool:
+        async with self.session() as session:
+            result = await session.execute(select(WelcomeMessage).where(WelcomeMessage.id == message_id))
+            msg = result.scalar_one_or_none()
+            if msg:
+                await session.delete(msg)
+                return True
+            return False
+
+    async def list_welcome_messages(self) -> list[WelcomeMessage]:
+        async with self.session() as session:
+            result = await session.execute(select(WelcomeMessage).order_by(WelcomeMessage.created_at.desc()))
+            return list(result.scalars())
+
+    async def add_custom_reply(self, keyword: str, reply_text: str, media_path: str | None = None, media_type: str | None = None) -> None:
+        async with self.session() as session:
+            session.add(CustomAutoReply(keyword=keyword, reply_text=reply_text, media_path=media_path, media_type=media_type))
+
+    async def delete_custom_reply(self, reply_id: int) -> bool:
+        async with self.session() as session:
+            result = await session.execute(select(CustomAutoReply).where(CustomAutoReply.id == reply_id))
+            reply = result.scalar_one_or_none()
+            if reply:
+                await session.delete(reply)
+                return True
+            return False
+
+    async def list_custom_replies(self) -> list[CustomAutoReply]:
+        async with self.session() as session:
+            result = await session.execute(select(CustomAutoReply).order_by(CustomAutoReply.keyword.asc()))
+            return list(result.scalars())
+
+    async def get_custom_reply_by_keyword(self, text: str) -> CustomAutoReply | None:
+        async with self.session() as session:
+            result = await session.execute(
+                select(CustomAutoReply)
+                .where(CustomAutoReply.enabled.is_(True))
+                .order_by(CustomAutoReply.created_at.desc())
+            )
+            replies = list(result.scalars())
+            text_lower = text.lower()
+            for reply in replies:
+                if reply.keyword.lower() in text_lower:
+                    return reply
+            return None
+
+    async def delete_account_session(self, session_name: str) -> bool:
+        async with self.session() as session:
+            result = await session.execute(select(AccountSession).where(AccountSession.name == session_name))
+            account = result.scalar_one_or_none()
+            if account:
+                await session.delete(account)
+                return True
+            return False
 
     async def close(self) -> None:
         await self.engine.dispose()

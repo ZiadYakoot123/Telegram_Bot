@@ -80,6 +80,7 @@ async def run() -> None:
         tg_manager=tg_manager,
         messaging=messaging,
         analytics=analytics,
+        auto_reply=auto_reply,
     )
 
     await control_bot.start()
