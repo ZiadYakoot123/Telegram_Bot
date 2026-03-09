@@ -71,6 +71,9 @@ def auto_reply_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("إيقاف الردود", callback_data="auto_disable"),
             ],
             [
+                InlineKeyboardButton("👥 إدارة المستخدمين للرد", callback_data="auto_users_menu"),
+            ],
+            [
                 InlineKeyboardButton("رد بالكلمات المفتاحية", callback_data="auto_keywords"),
                 InlineKeyboardButton("رد عشوائي من عدة ردود", callback_data="auto_random"),
             ],
@@ -79,6 +82,22 @@ def auto_reply_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("رد بالفيديو", callback_data="auto_video"),
             ],
             [InlineKeyboardButton("⬅️ رجوع", callback_data="back_dashboard")],
+        ]
+    )
+
+
+def auto_reply_users_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("➕ إضافة مستخدم", callback_data="auto_user_add"),
+                InlineKeyboardButton("➖ حذف مستخدم", callback_data="auto_user_remove"),
+            ],
+            [
+                InlineKeyboardButton("📋 عرض المستخدمين", callback_data="auto_user_list"),
+                InlineKeyboardButton("🔄 تفعيل/تعطيل مستخدم", callback_data="auto_user_toggle"),
+            ],
+            [InlineKeyboardButton("⬅️ رجوع", callback_data="menu_auto_reply")],
         ]
     )
 

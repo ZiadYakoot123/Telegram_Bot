@@ -141,6 +141,17 @@ class CustomAutoReply(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AutoReplyUser(Base):
+    __tablename__ = "auto_reply_users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Database:
     def __init__(self, url: str) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -367,6 +378,51 @@ class Database:
                 if reply.keyword.lower() in text_lower:
                     return reply
             return None
+
+    async def add_auto_reply_user(self, user_id: int, username: str | None = None, full_name: str | None = None) -> None:
+        async with self.session() as session:
+            # Check if user already exists
+            result = await session.execute(select(AutoReplyUser).where(AutoReplyUser.user_id == user_id))
+            existing = result.scalar_one_or_none()
+            if existing:
+                # Update existing user
+                existing.username = username
+                existing.full_name = full_name
+                existing.enabled = True
+            else:
+                # Add new user
+                session.add(AutoReplyUser(user_id=user_id, username=username, full_name=full_name))
+
+    async def remove_auto_reply_user(self, user_id: int) -> bool:
+        async with self.session() as session:
+            result = await session.execute(select(AutoReplyUser).where(AutoReplyUser.user_id == user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                await session.delete(user)
+                return True
+            return False
+
+    async def toggle_auto_reply_user(self, user_id: int, enabled: bool) -> bool:
+        async with self.session() as session:
+            result = await session.execute(select(AutoReplyUser).where(AutoReplyUser.user_id == user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                user.enabled = enabled
+                return True
+            return False
+
+    async def list_auto_reply_users(self) -> list[AutoReplyUser]:
+        async with self.session() as session:
+            result = await session.execute(select(AutoReplyUser).order_by(AutoReplyUser.created_at.desc()))
+            return list(result.scalars())
+
+    async def get_enabled_auto_reply_user_ids(self) -> list[int]:
+        async with self.session() as session:
+            result = await session.execute(
+                select(AutoReplyUser.user_id)
+                .where(AutoReplyUser.enabled.is_(True))
+            )
+            return list(result.scalars())
 
     async def delete_account_session(self, session_name: str) -> bool:
         async with self.session() as session:

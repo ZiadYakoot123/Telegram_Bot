@@ -79,6 +79,7 @@ async def run() -> None:
         sessions_manager=sessions,
         tg_manager=tg_manager,
         messaging=messaging,
+        extractor=extractor,
         analytics=analytics,
         auto_reply=auto_reply,
     )

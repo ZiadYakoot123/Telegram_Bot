@@ -1,231 +1,224 @@
-# Telegram Manager Bot (Ethical Automation)
+# Telegram Bot Manager
 
-Production-ready, modular Telegram management system built with:
-- Telethon (MTProto user client)
-- python-telegram-bot (admin control panel)
-- SQLite by default, optional PostgreSQL
-- APScheduler for recurring jobs
-- Pandas for CSV/Excel reports
+A modular Telegram automation manager built with Telethon + python-telegram-bot.
 
-This project is designed for **ethical, safety-limited automation** and should be used in compliance with Telegram Terms of Service.
+This project provides:
+- Userbot features (Telethon session)
+- Admin control bot dashboard
+- Auto-reply system (custom replies + user targeting)
+- Bulk/public messaging with safety controls
+- Extraction, analytics, scheduling, and backups
+
+Use responsibly and follow Telegram Terms of Service.
 
 ## Features
 
-- Data extraction from groups/channels (with delay control)
-- Interaction-based contact detection and filtering windows (7/30/custom days)
-- Messaging by username or phone (text/file/image/link)
-- Duplicate prevention (never send same target twice)
-- Batch sending + randomized delays + emergency stop
-- Safe gradual group additions (daily safety cap)
-- Number checks and country-based number filtering
-- Keyword auto-replies with configurable delay
-- One-time and recurring scheduling
-- Analytics: sent/received counts, top users, top words
-- CSV/Excel exports
-- InlineKeyboard admin dashboard bot
-- Optional admin password on top of admin Telegram IDs
-- Templates save/reuse
-- Daily backup (SQLite)
-- Multi-session support and safe active-session switching
-- Rest mode to pause automation
+- Multi-session Telethon account support
+- Admin dashboard via Telegram bot
+- Welcome messages management
+- Auto-reply system:
+  - custom keyword replies from database
+  - enable/disable auto reply globally
+  - allow-list users for auto replies
+  - optional media reply support
+- Public/bulk messaging:
+  - send to usernames
+  - send to extracted users (`all` mode)
+  - duplicate prevention
+  - batch sending + randomized delays
+  - emergency stop support
+- Extract users from groups/channels (`/extract_group`)
+- Templates, analytics, top words, exports
+- Daily SQLite backup job
+- REST mode to pause automation quickly
 
 ## Project Structure
 
 ```text
-telegram_manager/
+Telegram_Bot/
 ├── app/
 │   ├── main.py
 │   ├── config.py
 │   ├── database.py
 │   ├── logger.py
-│   ├── clients/
-│   │   ├── telegram_client.py
-│   │   ├── sessions_manager.py
-│   │   └── session_login.py
-│   ├── modules/
-│   │   ├── extractor.py
-│   │   ├── sender.py
-│   │   ├── auto_reply.py
-│   │   ├── scheduler.py
-│   │   ├── analytics.py
-│   │   ├── filters.py
-│   │   ├── batch_system.py
-│   │   └── backup.py
 │   ├── bot/
-│   │   ├── control_bot.py
-│   │   └── keyboards.py
+│   ├── clients/
+│   ├── modules/
 │   └── utils/
-│       ├── delays.py
-│       ├── validators.py
-│       └── helpers.py
 ├── data/
 │   ├── backups/
 │   ├── exports/
 │   ├── logs/
 │   └── sessions/
-├── .env.example
 ├── requirements.txt
 ├── Dockerfile
 └── docker-compose.yml
 ```
 
-## 1. Prerequisites
+## Requirements
 
 - Python 3.11+
-- Telegram account for Telethon user session
-- Bot token from `@BotFather`
+- Telegram API credentials (`API_ID`, `API_HASH`) from https://my.telegram.org
+- Telegram bot token (`BOT_TOKEN`) from BotFather
+- At least one Telegram account for Telethon session login
 
-## 2. Get Telegram API ID / API HASH
+## Quick Start (Any Device)
 
-1. Open `https://my.telegram.org`
-2. Log in with your phone number
-3. Go to `API development tools`
-4. Create an app and copy:
-- `api_id`
-- `api_hash`
-
-## 3. Setup
+## 1) Clone
 
 ```bash
-# Windows PowerShell
-cd telegram_manager
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
+git clone https://github.com/ZiadYakoot123/Telegram_Bot.git
+cd Telegram_Bot
 ```
 
+## 2) Create environment file
+
 ```bash
-# Linux/macOS
-cd telegram_manager
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and fill at minimum:
+Fill these required values in `.env`:
 - `API_ID`
 - `API_HASH`
 - `BOT_TOKEN`
-- `ADMIN_IDS=12345,67890`
-- `DATABASE_URL` (optional; leave empty for SQLite)
-- `DEFAULT_DELAY`
-- `RANDOM_DELAY_RANGE`
+- `ADMIN_IDS`
 
-## 4. Authorize Telethon Session (one-time per account)
+## 3) Install dependencies
+
+### Windows (PowerShell)
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Linux / macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Alpine Linux note
+
+If pip is restricted by system policy, install `py3-pip` and use a virtual environment.
+
+## 4) Authorize Telethon session (required for userbot features)
 
 ```bash
 python -m app.clients.session_login
 ```
 
-Enter a session name (example: `default`) and complete Telegram login. Session file will be stored in `data/sessions/`.
+- Enter session name (recommended: `default`)
+- Enter phone number and Telegram login code
 
-## 5. Run
+Without this step, extract/public messaging and other Telethon features will not work.
+
+## 5) Run bot
 
 ```bash
 python -m app.main
 ```
 
-This is the one-command runtime entrypoint.
-
-## 6. Control Panel Bot Usage
-
-Open your bot in Telegram and use:
-- `/start` for dashboard
-- `/auth <password>` if `ADMIN_PASSWORD` is set
-- `/stats` for quick stats
-- `/template_save name | content`
-- `/template_send <name> <@username>`
-
-Inline dashboard includes:
-- Start Sending / Stop Sending
-- Rest Mode
-- Stats
-- Templates
-- Accounts / Sessions
-
-## 7. Docker (optional)
+## Docker Run
 
 ```bash
 docker compose up --build -d
 ```
 
-If using PostgreSQL container, set in `.env`:
-```env
-DATABASE_URL=postgresql+asyncpg://telegram:telegram@postgres:5432/telegram_manager
+To view logs:
+
+```bash
+docker compose logs -f app
 ```
 
-## 8. Safety Notes (Important)
+To stop:
 
-- Use only opt-in or interaction-based targeting.
-- Respect Telegram anti-spam limits and local law.
-- Keep conservative delays and small batch sizes.
-- Avoid unsolicited mass campaigns.
-- Do not bypass Telegram restrictions.
-- `Rest Mode` can pause automation quickly.
-- Emergency stop is available via dashboard `Stop Sending`.
+```bash
+docker compose down
+```
 
-## 9. Logging, Reports, Backups
-
-- Runtime logs: `data/logs/app.log`
-- Analytics export location: `data/exports/`
-- SQLite backups: `data/backups/`
-- Flood waits and errors are written to operation logs and file logs.
-
-## 10. Development Notes
-
-- Architecture is async-safe (`asyncio`, APScheduler async scheduler, SQLAlchemy async engine).
-- Secrets are loaded from `.env`; no hardcoded credentials.
-- The system is structured for extension by adding modules and handlers.
-
-## 11. GitHub Codespaces (Docker In Cloud)
-
-You can run this project fully in Codespaces without Docker on your local machine.
-
-### What was added
-
-- `.devcontainer/devcontainer.json` for a Codespaces-ready Python + Docker-in-Docker environment
-- `scripts/codespaces-start.sh` as the one-command startup flow
-
-### Steps
-
-1. Open repository in GitHub Codespaces.
-2. Wait for container setup to complete (`postCreateCommand` installs requirements and creates `.env` if missing).
-3. Configure `.env` values (or inject secrets) for:
-	- `API_ID`
-	- `API_HASH`
-	- `BOT_TOKEN`
-	- `ADMIN_IDS`
-4. Run the one-command startup:
+## GitHub Codespaces
 
 ```bash
 bash scripts/codespaces-start.sh
 ```
 
-### First-time Telegram session authorization
-
-Run once per account/session:
+If you need session authorization in containerized setup:
 
 ```bash
 docker compose run --rm app python -m app.clients.session_login
 ```
 
-### Useful commands in Codespaces
+## Core Commands (Telegram Bot)
 
+- `/start` open dashboard
+- `/auth <password>` authenticate admin (if enabled)
+- `/stats` quick stats
+- `/template_save name | content`
+- `/template_send <name> <@username>`
+- `/extract_group <group_id_or_username>` extract and save users
+
+## Public/Bulk Messaging Flow
+
+1. Extract users first:
+   - `/extract_group @group_username`
+2. Open bulk messaging from dashboard
+3. Send message text
+4. For targets:
+   - use `all` to send to extracted users
+   - or provide usernames manually (`@user1,@user2` or one per line)
+
+If `all` returns zero users, extraction has not been done yet (or failed).
+
+## Auto Reply Flow
+
+1. Enable auto replies from dashboard
+2. Add custom keyword reply
+3. Optional: manage allowed auto-reply users
+4. Incoming message matching keyword triggers reply
+
+Detailed guide: see [AUTO_REPLY_GUIDE.md](AUTO_REPLY_GUIDE.md)
+
+## Data and Logs
+
+- App logs: `data/logs/app.log`
+- Exports: `data/exports/`
+- Backups: `data/backups/`
+- Sessions: `data/sessions/`
+
+## Troubleshooting
+
+1. `Session 'default' is not authorized yet`
+- Run:
 ```bash
-# Show container status
-docker compose ps
-
-# App logs
-docker compose logs -f app
-
-# Stop stack
-docker compose down
+python -m app.clients.session_login
 ```
 
-### Notes
+2. Bulk send to `all` does not send
+- Run extraction first:
+```text
+/extract_group @group_username
+```
 
-- Codespaces is great for development/testing and remote runs.
-- It is not ideal for always-on production because Codespaces can suspend/stop.
-- For 24/7 production, deploy the same compose stack to a VPS.
+3. Username format issues
+- Use `@username` or `username`
+- Comma-separated and line-separated targets are both supported
+
+4. Flood/Rate limits
+- Keep `DEFAULT_DELAY` and `RANDOM_DELAY_RANGE` conservative
+- Keep batch sizes small
+
+## Safety
+
+- Respect Telegram limits and anti-spam policies
+- Use opt-in targeting where possible
+- Keep REST mode available as emergency pause
+
+## License
+
+This repository is licensed under the terms in [LICENSE](LICENSE).

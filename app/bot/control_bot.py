@@ -20,6 +20,7 @@ from telegram.ext import (
 from app.bot.keyboards import (
     accounts_keyboard,
     auto_reply_keyboard,
+    auto_reply_users_keyboard,
     bulk_keyboard,
     dashboard_keyboard,
     delay_keyboard,
@@ -35,6 +36,7 @@ from app.config import EXPORT_DIR
 from app.database import Database
 from app.modules.analytics import AnalyticsService
 from app.modules.auto_reply import AutoReplyService
+from app.modules.extractor import ExtractorService
 from app.modules.sender import MessagingService, SendPayload
 
 
@@ -44,8 +46,9 @@ logger = logging.getLogger(__name__)
 # Conversation states
 WELCOME_ADD_TEXT, WELCOME_DELETE_ID = range(2)
 AUTO_REPLY_ADD_KEYWORD, AUTO_REPLY_ADD_TEXT, AUTO_REPLY_DELETE_ID = range(3, 6)
-DELAY_SET_MIN, DELAY_SET_MAX = range(6, 8)
-BULK_TEXT_INPUT, BULK_TARGETS_INPUT = range(8, 10)
+AUTO_USER_ADD_ID, AUTO_USER_REMOVE_ID, AUTO_USER_TOGGLE_ID = range(6, 9)
+DELAY_SET_MIN, DELAY_SET_MAX = range(9, 11)
+BULK_TEXT_INPUT, BULK_TARGETS_INPUT = range(11, 13)
 
 
 @dataclass(slots=True)
@@ -57,6 +60,7 @@ class ControlBot:
     sessions_manager: SessionsManager
     tg_manager: TelegramClientManager
     messaging: MessagingService
+    extractor: ExtractorService
     analytics: AnalyticsService
     auto_reply: AutoReplyService
 
@@ -170,6 +174,24 @@ class ControlBot:
             SendPayload(text=template.content, image_path=template.media_path),
         )
         await update.message.reply_text("Template sent" if ok else "Template send failed")
+
+    async def cmd_extract_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_auth(update):
+            return
+
+        if not context.args:
+            await update.message.reply_text("Usage: /extract_group <group_id_or_username>")
+            return
+
+        group = context.args[0].strip()
+        await update.message.reply_text(f"جاري استخراج المستخدمين من {group} ...")
+
+        try:
+            count = await self.extractor.extract_from_group(group)
+            await update.message.reply_text(f"✅ تم استخراج {count} مستخدم من {group}")
+        except Exception as exc:
+            logger.exception("Failed to extract users from %s", group)
+            await update.message.reply_text(f"❌ فشل الاستخراج: {exc}")
 
     async def _show_not_implemented(self, query, section: str, keyboard) -> None:
         await query.edit_message_text(
@@ -340,6 +362,134 @@ class ControlBot:
             await update.message.reply_text("❌ رقم غير صحيح", reply_markup=auto_reply_keyboard())
         return ConversationHandler.END
 
+    # Auto-reply users management handlers
+    async def auto_user_add_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(
+            "أرسل معرف المستخدم (User ID) الذي تريد إضافته للرد التلقائي:\n\n"
+            "مثال: 123456789\n\n"
+            "يمكنك إيجاد معرف المستخدم بإرسال: @userinfobot"
+        )
+        return AUTO_USER_ADD_ID
+
+    async def auto_user_add_id_received(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            user_id = int(update.message.text.strip())
+            # Try to get user info from Telegram
+            try:
+                client = self.tg_manager.get_active_client()
+                user_entity = await client.get_entity(user_id)
+                username = getattr(user_entity, "username", None)
+                first_name = getattr(user_entity, "first_name", "")
+                last_name = getattr(user_entity, "last_name", "")
+                full_name = f"{first_name} {last_name}".strip() or None
+            except Exception as exc:
+                logger.warning(f"Could not fetch user info for {user_id}: {exc}")
+                username = None
+                full_name = None
+            
+            await self.database.add_auto_reply_user(user_id, username, full_name)
+            await self.auto_reply.reload_users()
+            
+            user_info = f"معرف: {user_id}"
+            if username:
+                user_info += f"\nاليوزر: @{username}"
+            if full_name:
+                user_info += f"\nالاسم: {full_name}"
+            
+            await update.message.reply_text(
+                f"✅ تم إضافة المستخدم للردود التلقائية\n\n{user_info}",
+                reply_markup=auto_reply_users_keyboard(),
+            )
+        except ValueError:
+            await update.message.reply_text("❌ معرف غير صحيح", reply_markup=auto_reply_users_keyboard())
+        return ConversationHandler.END
+
+    async def auto_user_remove_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        await update.callback_query.answer()
+        users = await self.database.list_auto_reply_users()
+        if not users:
+            await update.callback_query.message.reply_text(
+                "لا يوجد مستخدمين للحذف",
+                reply_markup=auto_reply_users_keyboard(),
+            )
+            return ConversationHandler.END
+
+        text = "اختر معرف المستخدم للحذف:\n\n"
+        for user in users:
+            user_info = f"• {user.user_id}"
+            if user.username:
+                user_info += f" (@{user.username})"
+            if user.full_name:
+                user_info += f" - {user.full_name}"
+            status = "✅" if user.enabled else "❌"
+            text += f"{status} {user_info}\n"
+        text += "\nأرسل معرف المستخدم:"
+
+        await update.callback_query.message.reply_text(text)
+        return AUTO_USER_REMOVE_ID
+
+    async def auto_user_remove_id_received(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            user_id = int(update.message.text.strip())
+            deleted = await self.database.remove_auto_reply_user(user_id)
+            if deleted:
+                await self.auto_reply.reload_users()
+                await update.message.reply_text("✅ تم حذف المستخدم", reply_markup=auto_reply_users_keyboard())
+            else:
+                await update.message.reply_text("❌ المستخدم غير موجود", reply_markup=auto_reply_users_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ معرف غير صحيح", reply_markup=auto_reply_users_keyboard())
+        return ConversationHandler.END
+
+    async def auto_user_toggle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        await update.callback_query.answer()
+        users = await self.database.list_auto_reply_users()
+        if not users:
+            await update.callback_query.message.reply_text(
+                "لا يوجد مستخدمين للتعديل",
+                reply_markup=auto_reply_users_keyboard(),
+            )
+            return ConversationHandler.END
+
+        text = "اختر معرف المستخدم لتفعيله أو تعطيله:\n\n"
+        for user in users:
+            user_info = f"• {user.user_id}"
+            if user.username:
+                user_info += f" (@{user.username})"
+            if user.full_name:
+                user_info += f" - {user.full_name}"
+            status = "✅ مفعّل" if user.enabled else "❌ معطّل"
+            text += f"{status} {user_info}\n"
+        text += "\nأرسل معرف المستخدم:"
+
+        await update.callback_query.message.reply_text(text)
+        return AUTO_USER_TOGGLE_ID
+
+    async def auto_user_toggle_id_received(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        try:
+            user_id = int(update.message.text.strip())
+            # Get current status
+            users = await self.database.list_auto_reply_users()
+            user = next((u for u in users if u.user_id == user_id), None)
+            if user:
+                new_status = not user.enabled
+                updated = await self.database.toggle_auto_reply_user(user_id, new_status)
+                if updated:
+                    await self.auto_reply.reload_users()
+                    status_text = "مفعّل" if new_status else "معطّل"
+                    await update.message.reply_text(
+                        f"✅ تم تحديث حالة المستخدم إلى: {status_text}",
+                        reply_markup=auto_reply_users_keyboard()
+                    )
+                else:
+                    await update.message.reply_text("❌ فشل التحديث", reply_markup=auto_reply_users_keyboard())
+            else:
+                await update.message.reply_text("❌ المستخدم غير موجود", reply_markup=auto_reply_users_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ معرف غير صحيح", reply_markup=auto_reply_users_keyboard())
+        return ConversationHandler.END
+
     # Delay configuration conversation handlers
     async def delay_set_min_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.callback_query.answer()
@@ -405,9 +555,25 @@ class ControlBot:
 
         if targets_input.lower() == "all":
             usernames = await self.database.list_usernames()
+            if not usernames:
+                await update.message.reply_text(
+                    "❌ لا يوجد مستخدمون في قاعدة البيانات.\n"
+                    "استخدم أولاً: /extract_group <group_id_or_username>",
+                    reply_markup=bulk_keyboard(),
+                )
+                return ConversationHandler.END
             targets = [f"@{u}" if not u.startswith("@") else u for u in usernames]
         else:
-            targets = [line.strip() for line in targets_input.split("\n") if line.strip()]
+            normalized_input = targets_input.replace("،", ",")
+            raw_targets: list[str] = []
+            for line in normalized_input.split("\n"):
+                for part in line.split(","):
+                    candidate = part.strip()
+                    if candidate:
+                        raw_targets.append(candidate)
+
+            # Accept @username or username and normalize to @username.
+            targets = [t if t.startswith("@") else f"@{t}" for t in raw_targets]
 
         await update.message.reply_text(
             f"جاري الإرسال إلى {len(targets)} مستخدم...\n\n"
@@ -579,6 +745,27 @@ class ControlBot:
             self.auto_reply.set_enabled(False)
             await self.database.set_setting("auto_reply_enabled", "0")
             await query.edit_message_text("تم إيقاف الردود التلقائية", reply_markup=auto_reply_keyboard())
+            return
+
+        if data == "auto_users_menu":
+            await query.edit_message_text("👥 إدارة مستخدمي الردود التلقائية", reply_markup=auto_reply_users_keyboard())
+            return
+
+        if data == "auto_user_list":
+            users = await self.database.list_auto_reply_users()
+            if not users:
+                text = "لا يوجد مستخدمين مضافين للردود التلقائية حالياً"
+            else:
+                text = "👥 المستخدمين المضافين للردود التلقائية:\n\n"
+                for user in users:
+                    user_info = f"• معرف: {user.user_id}"
+                    if user.username:
+                        user_info += f"\n  اليوزر: @{user.username}"
+                    if user.full_name:
+                        user_info += f"\n  الاسم: {user.full_name}"
+                    status = "✅ مفعّل" if user.enabled else "❌ معطّل"
+                    text += f"{status} {user_info}\n\n"
+            await query.edit_message_text(text, reply_markup=auto_reply_users_keyboard())
             return
 
         if data in {"delay_set_min", "delay_set_max", "delay_disable", "delay_test"}:
@@ -788,6 +975,7 @@ class ControlBot:
         self.application.add_handler(CommandHandler("start", self.cmd_start))
         self.application.add_handler(CommandHandler("auth", self.cmd_auth))
         self.application.add_handler(CommandHandler("stats", self.cmd_stats))
+        self.application.add_handler(CommandHandler("extract_group", self.cmd_extract_group))
         self.application.add_handler(CommandHandler("template_save", self.cmd_template_save))
         self.application.add_handler(CommandHandler("template_send", self.cmd_template_send))
 
@@ -828,6 +1016,33 @@ class ControlBot:
             fallbacks=[CommandHandler("cancel", self.conversation_cancel)],
         )
         self.application.add_handler(auto_reply_delete_conv)
+
+        auto_user_add_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.auto_user_add_start, pattern="^auto_user_add$")],
+            states={
+                AUTO_USER_ADD_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.auto_user_add_id_received)],
+            },
+            fallbacks=[CommandHandler("cancel", self.conversation_cancel)],
+        )
+        self.application.add_handler(auto_user_add_conv)
+
+        auto_user_remove_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.auto_user_remove_start, pattern="^auto_user_remove$")],
+            states={
+                AUTO_USER_REMOVE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.auto_user_remove_id_received)],
+            },
+            fallbacks=[CommandHandler("cancel", self.conversation_cancel)],
+        )
+        self.application.add_handler(auto_user_remove_conv)
+
+        auto_user_toggle_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.auto_user_toggle_start, pattern="^auto_user_toggle$")],
+            states={
+                AUTO_USER_TOGGLE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.auto_user_toggle_id_received)],
+            },
+            fallbacks=[CommandHandler("cancel", self.conversation_cancel)],
+        )
+        self.application.add_handler(auto_user_toggle_conv)
 
         delay_min_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.delay_set_min_start, pattern="^delay_set_min$")],
