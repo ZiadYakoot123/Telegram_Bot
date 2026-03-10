@@ -164,6 +164,8 @@ class TelegramClientManager:
         async def _do() -> list[dict[str, Any]]:
             interactions: list[dict[str, Any]] = []
             async for dialog in client.iter_dialogs(limit=200):
+                if not getattr(dialog, "is_user", False):
+                    continue
                 msg = dialog.message
                 if not msg:
                     continue

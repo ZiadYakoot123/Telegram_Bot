@@ -162,11 +162,13 @@ docker compose run --rm app python -m app.clients.session_login
 - `/template_save name | content`
 - `/template_send <name> <@username>`
 - `/extract_group <group_id_or_username>` extract and save users
+- `/extract_private [days]` extract users from recent private chats (default: 30 days)
 
 ## Public/Bulk Messaging Flow
 
 1. Extract users first:
    - `/extract_group @group_username`
+  - or `/extract_private 30` for private-chat interactions
 2. Open bulk messaging from dashboard
 3. Send message text
 4. For targets:
@@ -203,6 +205,8 @@ python -m app.clients.session_login
 - Run extraction first:
 ```text
 /extract_group @group_username
+or
+/extract_private 30
 ```
 
 3. Username format issues

@@ -193,6 +193,31 @@ class ControlBot:
             logger.exception("Failed to extract users from %s", group)
             await update.message.reply_text(f"❌ فشل الاستخراج: {exc}")
 
+    async def cmd_extract_private(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_auth(update):
+            return
+
+        days = 30
+        if context.args:
+            try:
+                days = int(context.args[0])
+                if days <= 0:
+                    raise ValueError
+            except ValueError:
+                await update.message.reply_text("Usage: /extract_private [days>0]")
+                return
+
+        await update.message.reply_text(f"جاري استخراج مستخدمي الخاص من آخر {days} يوم ...")
+
+        try:
+            imported = await self.extractor.import_recent_interactions(days=days)
+            await update.message.reply_text(
+                f"✅ تم استخراج {imported} مستخدم من الخاص (آخر {days} يوم)"
+            )
+        except Exception as exc:
+            logger.exception("Failed to extract private interactions")
+            await update.message.reply_text(f"❌ فشل استخراج الخاص: {exc}")
+
     async def _show_not_implemented(self, query, section: str, keyboard) -> None:
         await query.edit_message_text(
             f"{section}\n\nهذه الوظيفة ستحتاج خطوة إدخال إضافية.\n"
@@ -558,7 +583,8 @@ class ControlBot:
             if not usernames:
                 await update.message.reply_text(
                     "❌ لا يوجد مستخدمون في قاعدة البيانات.\n"
-                    "استخدم أولاً: /extract_group <group_id_or_username>",
+                    "استخدم أولاً: /extract_group <group_id_or_username>\n"
+                    "أو: /extract_private [days]",
                     reply_markup=bulk_keyboard(),
                 )
                 return ConversationHandler.END
@@ -891,9 +917,12 @@ class ControlBot:
                 )
             elif data == "bulk_group_members":
                 await query.edit_message_text(
-                    "لاستخراج أعضاء مجموعة، استخدم الأمر:\n"
-                    "/extract_group <group_id_or_username>\n\n"
-                    "مثال: /extract_group @mygroup",
+                    "لاستخراج المستخدمين، استخدم أحد الأوامر:\n"
+                    "/extract_group <group_id_or_username>\n"
+                    "/extract_private [days]\n\n"
+                    "أمثلة:\n"
+                    "/extract_group @mygroup\n"
+                    "/extract_private 30",
                     reply_markup=bulk_keyboard(),
                 )
             elif data in {"bulk_send_image", "bulk_send_video", "bulk_send_button", "bulk_send_scheduled"}:
@@ -976,6 +1005,7 @@ class ControlBot:
         self.application.add_handler(CommandHandler("auth", self.cmd_auth))
         self.application.add_handler(CommandHandler("stats", self.cmd_stats))
         self.application.add_handler(CommandHandler("extract_group", self.cmd_extract_group))
+        self.application.add_handler(CommandHandler("extract_private", self.cmd_extract_private))
         self.application.add_handler(CommandHandler("template_save", self.cmd_template_save))
         self.application.add_handler(CommandHandler("template_send", self.cmd_template_send))
 
