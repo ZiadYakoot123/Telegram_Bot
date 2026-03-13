@@ -5,7 +5,8 @@ import logging
 from app.clients.telegram_client import TelegramClientManager
 from app.config import settings
 from app.database import Database
-from app.utils.delays import sleep_fixed
+from app.utils.delays import sleep_random
+from app.utils.helpers import add_invisible_entropy, add_random_number_suffix
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,28 @@ class AutoReplyService:
         value = await self.database.get_setting("rest_mode", "0")
         return (value or "0") == "1"
 
+    async def _sleep_reply_delay(self) -> None:
+        default_low = 1.0
+        default_high = 3.0
+
+        raw_min = await self.database.get_setting("delay_min", str(default_low))
+        raw_max = await self.database.get_setting("delay_max", str(default_high))
+
+        try:
+            low = max(0.0, float(raw_min if raw_min is not None else default_low))
+        except (TypeError, ValueError):
+            low = default_low
+
+        try:
+            high = max(0.0, float(raw_max if raw_max is not None else default_high))
+        except (TypeError, ValueError):
+            high = default_high
+
+        if low > high:
+            low, high = high, low
+
+        await sleep_random(low, high)
+
     async def _on_incoming_message(self, user_id: int, text: str) -> None:
         await self.database.log_interaction(user_id, "received", text)
 
@@ -55,10 +78,13 @@ class AutoReplyService:
         # First check custom replies from database
         custom_reply = await self.database.get_custom_reply_by_keyword(text)
         if custom_reply:
-            await sleep_fixed(settings.auto_reply_delay)
+            await self._sleep_reply_delay()
             
             # Send text reply
-            await self.tg.send_text(user_id, custom_reply.reply_text)
+            if custom_reply.reply_text:
+                reply_text = add_random_number_suffix(custom_reply.reply_text)
+                reply_with_entropy = add_invisible_entropy(reply_text)
+                await self.tg.send_text(user_id, reply_with_entropy)
             
             # Send media if available
             if custom_reply.media_path:
@@ -67,7 +93,8 @@ class AutoReplyService:
                 except Exception as exc:
                     logger.error(f"Failed to send media: {exc}")
             
-            await self.database.log_interaction(user_id, "sent", custom_reply.reply_text)
+            reply_log = custom_reply.reply_text or f"[Media: {custom_reply.media_type}]"
+            await self.database.log_interaction(user_id, "sent", reply_log)
             await self.database.log_operation("send", "success", f"Auto-reply sent to {user_id}")
             return
 
@@ -77,8 +104,10 @@ class AutoReplyService:
         if not any(keyword in normalized for keyword in keywords):
             return
 
-        await sleep_fixed(settings.auto_reply_delay)
+        await self._sleep_reply_delay()
         reply_text = "اهلا بك! كيف يمكنني مساعدتك؟"
-        await self.tg.send_text(user_id, reply_text)
+        reply_text = add_random_number_suffix(reply_text)
+        reply_with_entropy = add_invisible_entropy(reply_text)
+        await self.tg.send_text(user_id, reply_with_entropy)
         await self.database.log_interaction(user_id, "sent", reply_text)
         await self.database.log_operation("send", "success", f"Auto-reply sent to {user_id}")

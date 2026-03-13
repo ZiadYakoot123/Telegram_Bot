@@ -19,7 +19,7 @@ def dashboard_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("6️⃣ 🔍 أكثر الكلمات", callback_data="menu_words"),
             ],
             [
-                InlineKeyboardButton("7️⃣ ➕ إضافة رد تلقائي", callback_data="quick_add_auto_reply"),
+                InlineKeyboardButton("7️⃣ ❓ المساعدة", callback_data="menu_help"),
                 InlineKeyboardButton("8️⃣ 📢 إرسال جماعي", callback_data="menu_bulk"),
             ],
             [
@@ -203,8 +203,11 @@ def accounts_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("تسجيل خروج حساب", callback_data="accounts_logout"),
             ],
             [
-                InlineKeyboardButton("إضافة حساب", callback_data="account_add"),
-                InlineKeyboardButton("تصدير اليوزرات", callback_data="users_export"),
+                InlineKeyboardButton("➕ إضافة حساب", callback_data="account_add"),
+                InlineKeyboardButton("📤 تصدير اليوزرات", callback_data="users_export"),
+            ],
+            [
+                InlineKeyboardButton("🧹 تنظيف السيرفر", callback_data="users_cleanup"),
             ],
             [InlineKeyboardButton("⬅️ رجوع", callback_data="back_dashboard")],
         ]

@@ -9,8 +9,8 @@ from app.config import settings
 from app.database import Database
 from app.modules.batch_system import BatchController
 from app.modules.filters import deduplicate_targets, filter_telegram_numbers_by_country
-from app.utils.delays import sleep_with_jitter
-from app.utils.helpers import random_hashtag
+from app.utils.delays import sleep_random, sleep_with_jitter
+from app.utils.helpers import add_invisible_entropy, add_random_number_suffix, random_hashtag
 from app.utils.validators import is_valid_phone, is_valid_username
 
 
@@ -49,6 +49,31 @@ class MessagingService:
         value = await self.database.get_setting("rest_mode", "0")
         return (value or "0") == "1"
 
+    async def _runtime_delay_range(self) -> tuple[float, float]:
+        default_low, default_high = settings.random_delay_range
+
+        raw_min = await self.database.get_setting("delay_min", str(default_low))
+        raw_max = await self.database.get_setting("delay_max", str(default_high))
+
+        try:
+            low = max(0.0, float(raw_min if raw_min is not None else default_low))
+        except (TypeError, ValueError):
+            low = max(0.0, float(default_low))
+
+        try:
+            high = max(0.0, float(raw_max if raw_max is not None else default_high))
+        except (TypeError, ValueError):
+            high = max(0.0, float(default_high))
+
+        if low > high:
+            low, high = high, low
+
+        return low, high
+
+    async def _sleep_runtime_delay(self) -> None:
+        low, high = await self._runtime_delay_range()
+        await sleep_random(low, high)
+
     def _compose_message(self, payload: SendPayload) -> str:
         parts: list[str] = []
         if payload.text:
@@ -57,7 +82,10 @@ class MessagingService:
             parts.append(payload.link)
         if payload.random_hashtag_suffix:
             parts.append(random_hashtag())
-        return "\n".join(parts).strip()
+        text = "\n".join(parts).strip()
+        text = add_random_number_suffix(text)
+        # Add invisible entropy to prevent duplicate detection
+        return add_invisible_entropy(text)
 
     async def _send_to_recipient(self, recipient_key: str, recipient: str | int, payload: SendPayload) -> bool:
         if await self._is_rest_mode():
@@ -142,7 +170,7 @@ class MessagingService:
                 failed += 1
 
             processed += 1
-            await sleep_with_jitter(settings.default_delay, settings.random_delay_range)
+            await self._sleep_runtime_delay()
 
             if self.batch.config.enabled and index % self.batch.config.batch_size == 0:
                 await self.batch.wait_between_batches()
@@ -164,7 +192,7 @@ class MessagingService:
             else:
                 found.append(number)
 
-            await sleep_with_jitter(settings.default_delay, settings.random_delay_range)
+            await self._sleep_runtime_delay()
 
         await self.database.log_operation(
             "extract",
@@ -204,6 +232,10 @@ class MessagingService:
             else:
                 failed += 1
                 await self.database.log_operation("add", "failed", f"Failed adding {user} to {group}")
-            await sleep_with_jitter(delay, settings.random_delay_range)
+
+            if delay_between_adds is None:
+                await self._sleep_runtime_delay()
+            else:
+                await sleep_with_jitter(delay, (0.0, 0.0))
 
         return {"added": added, "failed": failed, "safe_limit": safe_limit}

@@ -17,6 +17,7 @@ from app.modules.batch_system import BatchConfig, BatchController
 from app.modules.extractor import ExtractorService
 from app.modules.scheduler import SchedulerService
 from app.modules.sender import MessagingService
+from app.modules.welcome import WelcomeService
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ async def run() -> None:
     scheduler = SchedulerService(db)
     backup = BackupService(db)
     auto_reply = AutoReplyService(tg_manager, db)
+    welcome = WelcomeService(tg_manager, db)
 
     scheduler.start()
     scheduler.scheduler.add_job(
@@ -67,6 +69,7 @@ async def run() -> None:
     )
 
     await auto_reply.start()
+    await welcome.start()
 
     # Keep extractor referenced for future extension and scheduled jobs.
     _ = extractor
