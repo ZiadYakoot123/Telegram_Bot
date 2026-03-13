@@ -15,7 +15,8 @@ Use responsibly and follow Telegram Terms of Service.
 
 - Multi-session Telethon account support
 - Admin dashboard via Telegram bot
-- Welcome messages management
+- Interactive account add flow from bot (phone -> code -> optional 2FA)
+- Welcome messages management (text/photo/video)
 - Auto-reply system:
   - custom keyword replies from database
   - enable/disable auto reply globally
@@ -25,10 +26,15 @@ Use responsibly and follow Telegram Terms of Service.
   - send to usernames
   - send to extracted users (`all` mode)
   - duplicate prevention
+  - runtime delay control from dashboard (min/max)
   - batch sending + randomized delays
   - emergency stop support
 - Extract users from groups/channels (`/extract_group`)
 - Templates, analytics, top words, exports
+- Export usernames as Excel file (`.xlsx`) sent directly in bot chat
+- Random number suffix in outgoing userbot messages (anti-pattern variation)
+- Welcome random-number toggle
+- Auto REST mode schedule by time (daily on/off)
 - Daily SQLite backup job
 - REST mode to pause automation quickly
 
@@ -83,6 +89,13 @@ Fill these required values in `.env`:
 - `BOT_TOKEN`
 - `ADMIN_IDS`
 
+Recommended optional values:
+- `ADMIN_PASSWORD`
+- `PREFERRED_SESSION`
+- `REST_MODE`
+- `DEFAULT_DELAY`
+- `RANDOM_DELAY_RANGE`
+
 ## 3) Install dependencies
 
 ### Windows (PowerShell)
@@ -118,11 +131,21 @@ python -m app.clients.session_login
 
 Without this step, extract/public messaging and other Telethon features will not work.
 
+You can also add new accounts directly from bot dashboard:
+- Accounts -> Add Account
+- Enter phone number
+- Enter session name
+- Enter Telegram login code
+- If needed, enter 2FA password
+
 ## 5) Run bot
 
 ```bash
 python -m app.main
 ```
+
+If you run multiple instances with the same `BOT_TOKEN`, Telegram will return a `Conflict` error.
+Run only one active bot process per token.
 
 ## Docker Run
 
@@ -157,12 +180,53 @@ docker compose run --rm app python -m app.clients.session_login
 ## Core Commands (Telegram Bot)
 
 - `/start` open dashboard
+- `/help` show full commands help inside bot
 - `/auth <password>` authenticate admin (if enabled)
 - `/stats` quick stats
 - `/template_save name | content`
 - `/template_send <name> <@username>`
 - `/extract_group <group_id_or_username>` extract and save users
 - `/extract_private [days]` extract users from recent private chats (default: 30 days)
+- `/cancel` cancel any active interactive flow
+
+Most management flows are handled through inline dashboard buttons.
+
+## Dashboard Manual
+
+### Welcome Section
+
+- Enable/disable welcome
+- Add welcome message with optional photo/video
+- Delete/list welcome messages
+- Toggle random number in welcome text
+- Test welcome message
+
+### Auto Reply Section
+
+- Enable/disable auto reply
+- Add custom keyword reply
+- Add optional media for custom reply
+- Manage allowed users (add/remove/toggle/list)
+
+### Delay Section
+
+- Set minimum delay in seconds
+- Set maximum delay in seconds
+- Delay is applied at runtime to sending flows
+
+### REST Mode Section
+
+- Enable/disable rest mode immediately
+- Set daily automatic ON time (UTC)
+- Set daily automatic OFF time (UTC)
+
+### Accounts Section
+
+- List sessions
+- Switch active session
+- Add account interactively from bot
+- Export usernames as Excel file directly in chat
+- Cleanup user profiles (keeps logs)
 
 ## Public/Bulk Messaging Flow
 
@@ -177,12 +241,16 @@ docker compose run --rm app python -m app.clients.session_login
 
 If `all` returns zero users, extraction has not been done yet (or failed).
 
+The sender now applies runtime delay values configured from the dashboard.
+
 ## Auto Reply Flow
 
 1. Enable auto replies from dashboard
 2. Add custom keyword reply
 3. Optional: manage allowed auto-reply users
 4. Incoming message matching keyword triggers reply
+
+Auto-reply delay also follows runtime delay settings (`delay_min`/`delay_max`) from dashboard.
 
 Detailed guide: see [AUTO_REPLY_GUIDE.md](AUTO_REPLY_GUIDE.md)
 
@@ -192,6 +260,7 @@ Detailed guide: see [AUTO_REPLY_GUIDE.md](AUTO_REPLY_GUIDE.md)
 - Exports: `data/exports/`
 - Backups: `data/backups/`
 - Sessions: `data/sessions/`
+- Media files: `data/media/`
 
 ## Troubleshooting
 
@@ -217,11 +286,24 @@ or
 - Keep `DEFAULT_DELAY` and `RANDOM_DELAY_RANGE` conservative
 - Keep batch sizes small
 
+5. Images/videos are not saved from bot flow
+- Ensure `data/media/` exists and is writable
+
+6. Delay settings seem not working
+- Set both min and max from dashboard Delay section
+- Use flows that send messages (bulk/auto-reply)
+- Confirm bot is restarted after major updates
+
+7. REST auto schedule not triggering
+- Times are interpreted as UTC
+- Configure both ON and OFF times in HH:MM format
+
 ## Safety
 
 - Respect Telegram limits and anti-spam policies
 - Use opt-in targeting where possible
 - Keep REST mode available as emergency pause
+- Keep randomization and delay settings conservative to reduce account risk
 
 ## License
 
