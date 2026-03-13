@@ -157,6 +157,37 @@ class TelegramClientManager:
                 return
             await callback(user_id, text)
 
+    async def bind_welcome_handler(self, callback: Callable[[int, list[int]], Awaitable[None]]) -> None:
+        from telethon import events
+
+        client = self.get_active_client()
+
+        @client.on(events.ChatAction())
+        async def _on_chat_action(event: Any) -> None:
+            if not (getattr(event, "user_joined", False) or getattr(event, "user_added", False)):
+                return
+
+            chat_id = getattr(event, "chat_id", None)
+            if chat_id is None:
+                return
+
+            user_ids: list[int] = []
+            users = getattr(event, "users", None) or []
+            for user in users:
+                uid = getattr(user, "id", None)
+                if uid is not None:
+                    user_ids.append(int(uid))
+
+            if not user_ids:
+                single_user_id = getattr(event, "user_id", None)
+                if single_user_id is not None:
+                    user_ids.append(int(single_user_id))
+
+            if not user_ids:
+                return
+
+            await callback(int(chat_id), user_ids)
+
     async def fetch_recent_dialog_interactions(self, days: int = 30) -> list[dict[str, Any]]:
         client = self.get_active_client()
         min_date = datetime.utcnow().timestamp() - (days * 86400)

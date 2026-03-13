@@ -309,6 +309,15 @@ class Database:
             await session.execute(delete(InteractionLog))
             await session.execute(delete(UserProfile))
 
+    async def cleanup_user_profiles(self) -> int:
+        """Clear user profiles to reduce server load while keeping interaction logs"""
+        async with self.session() as session:
+            result = await session.execute(select(func.count()).select_from(UserProfile))
+            count = result.scalar() or 0
+            await session.execute(delete(UserProfile))
+        await self.log_operation("cleanup", "success", f"Cleared {count} user profiles")
+        return count
+
     async def clear_word_corpus(self) -> None:
         async with self.session() as session:
             await session.execute(
