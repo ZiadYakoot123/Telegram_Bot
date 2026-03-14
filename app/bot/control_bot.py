@@ -141,6 +141,10 @@ class ControlBot:
             "إرسال قالب محفوظ إلى يوزر محدد.\n\n"
             "8) /cancel\n"
             "إلغاء أي عملية إدخال تفاعلية حالية.\n\n"
+            "9) /delete_account <session_name>\n"
+            "حذف حساب من الإدارة مع إزالة ملف الجلسة.\n\n"
+            "10) /logout_account <session_name>\n"
+            "تسجيل خروج الحساب بإزالة ملف الجلسة.\n\n"
             "ملاحظات:\n"
             "- أوامر إدارة الحسابات/الترحيب/الردود متاحة أيضًا من الأزرار داخل اللوحة.\n"
             "- بعض الميزات تحتاج حساب userbot مفعل (Session)."
@@ -271,6 +275,88 @@ class ControlBot:
         except Exception as exc:
             logger.exception("Failed to extract private interactions")
             await update.message.reply_text(f"❌ فشل استخراج الخاص: {exc}")
+
+    async def _remove_account_session(self, session_name: str) -> tuple[bool, str]:
+        target = session_name.strip()
+        if not target:
+            return False, "❌ اسم الحساب مطلوب"
+
+        sessions = await self.sessions_manager.list_sessions()
+        if target not in sessions:
+            return False, "❌ الحساب غير موجود"
+
+        if len(sessions) <= 1:
+            return False, "❌ لا يمكن حذف الحساب الوحيد المتبقي"
+
+        active = await self.sessions_manager.get_active_session()
+        switched_to: str | None = None
+        if active == target:
+            switched_to = next((name for name in sessions if name != target), None)
+            if switched_to is None:
+                return False, "❌ تعذر إيجاد حساب بديل لتفعيله"
+
+            await self.sessions_manager.set_active_session(switched_to)
+            await self.tg_manager.start_session(
+                switched_to,
+                self.sessions_manager.session_file(switched_to),
+            )
+
+        client = self.tg_manager.clients.pop(target, None)
+        if client is not None:
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.exception("Failed to disconnect session %s while deleting account", target)
+
+        if self.tg_manager.active_session == target:
+            self.tg_manager.active_session = switched_to
+
+        removed = await self.database.delete_account_session(target)
+        if not removed:
+            return False, "❌ فشل حذف الحساب من قاعدة البيانات"
+
+        session_file = self.sessions_manager.session_file(target).with_suffix(".session")
+        journal_file = self.sessions_manager.session_file(target).with_suffix(".session-journal")
+        for path in (session_file, journal_file):
+            try:
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                logger.exception("Failed removing session file: %s", path)
+
+        if switched_to:
+            return True, f"✅ تم حذف الحساب: {target}\nتم تحويل الحساب النشط إلى: {switched_to}"
+        return True, f"✅ تم حذف الحساب: {target}"
+
+    async def cmd_delete_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_auth(update):
+            return
+
+        if not context.args:
+            sessions = await self.sessions_manager.list_sessions()
+            lines = ["Usage: /delete_account <session_name>", "", "الحسابات المتاحة:"]
+            lines.extend(f"- {name}" for name in sessions)
+            await update.message.reply_text("\n".join(lines), reply_markup=accounts_keyboard())
+            return
+
+        ok, msg = await self._remove_account_session(context.args[0])
+        await update.message.reply_text(msg, reply_markup=accounts_keyboard())
+
+    async def cmd_logout_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_auth(update):
+            return
+
+        if not context.args:
+            sessions = await self.sessions_manager.list_sessions()
+            lines = ["Usage: /logout_account <session_name>", "", "الحسابات المتاحة:"]
+            lines.extend(f"- {name}" for name in sessions)
+            await update.message.reply_text("\n".join(lines), reply_markup=accounts_keyboard())
+            return
+
+        ok, msg = await self._remove_account_session(context.args[0])
+        if ok:
+            msg = msg.replace("تم حذف الحساب", "تم تسجيل خروج الحساب")
+        await update.message.reply_text(msg, reply_markup=accounts_keyboard())
 
     async def _show_not_implemented(self, query, section: str, keyboard) -> None:
         await query.edit_message_text(
@@ -1503,6 +1589,8 @@ class ControlBot:
         self.application.add_handler(CommandHandler("extract_private", self.cmd_extract_private))
         self.application.add_handler(CommandHandler("template_save", self.cmd_template_save))
         self.application.add_handler(CommandHandler("template_send", self.cmd_template_send))
+        self.application.add_handler(CommandHandler("delete_account", self.cmd_delete_account))
+        self.application.add_handler(CommandHandler("logout_account", self.cmd_logout_account))
 
         # Conversation handlers for interactive input
         welcome_add_conv = ConversationHandler(
