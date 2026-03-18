@@ -143,7 +143,10 @@ class TelegramClientManager:
 
         return await self.safe_call("add_member_to_group", _do)
 
-    async def bind_auto_reply_handler(self, callback: Callable[[int, str], Awaitable[None]]) -> None:
+    async def bind_auto_reply_handler(
+        self,
+        callback: Callable[[int, int, str, bool], Awaitable[None]],
+    ) -> None:
         from telethon import events
 
         client = self.get_active_client()
@@ -152,10 +155,13 @@ class TelegramClientManager:
         async def _on_new_message(event: Any) -> None:
             sender = await event.get_sender()
             user_id = getattr(sender, "id", None)
+            chat_id = getattr(event, "chat_id", None)
             text = event.raw_text or ""
-            if user_id is None:
+            if user_id is None or chat_id is None:
                 return
-            await callback(user_id, text)
+            if bool(getattr(sender, "bot", False)):
+                return
+            await callback(int(chat_id), int(user_id), text, bool(getattr(event, "is_private", False)))
 
     async def bind_welcome_handler(self, callback: Callable[[int, list[int]], Awaitable[None]]) -> None:
         from telethon import events

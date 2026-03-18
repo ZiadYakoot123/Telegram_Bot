@@ -10,6 +10,7 @@ from pathlib import Path
 from openpyxl import Workbook
 from telethon import TelegramClient
 from telethon.errors import PhoneCodeExpiredError, PhoneCodeInvalidError, SessionPasswordNeededError
+from telegram.error import BadRequest
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -1578,8 +1579,18 @@ class ControlBot:
     async def _rest_mode(self) -> bool:
         return (await self.database.get_setting("rest_mode", "0")) == "1"
 
+    async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        err = context.error
+        if isinstance(err, BadRequest) and "message is not modified" in str(err).lower():
+            # Ignore harmless duplicate edit attempts from callback flows.
+            logger.debug("Ignored non-critical Telegram edit error: %s", err)
+            return
+
+        logger.exception("Unhandled error in control bot", exc_info=err)
+
     async def start(self) -> None:
         self.application = Application.builder().token(self.token).build()
+        self.application.add_error_handler(self._on_error)
 
         self.application.add_handler(CommandHandler("start", self.cmd_start))
         self.application.add_handler(CommandHandler("help", self.cmd_help))

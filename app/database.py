@@ -230,6 +230,28 @@ class Database:
         async with self.session() as session:
             session.add(OperationLog(operation_type=operation_type, status=status, details=details))
 
+    async def has_welcome_once_sent(self, user_id: int, chat_id: int | None = None) -> bool:
+        marker = f"chat_id={chat_id};user_id={user_id}" if chat_id is not None else f"user_id={user_id}"
+        async with self.session() as session:
+            stmt = select(OperationLog.id).where(
+                OperationLog.operation_type == "welcome_once",
+                OperationLog.status == "success",
+                OperationLog.details == marker,
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none() is not None
+
+    async def mark_welcome_once_sent(self, user_id: int, chat_id: int | None = None) -> None:
+        marker = f"chat_id={chat_id};user_id={user_id}" if chat_id is not None else f"user_id={user_id}"
+        async with self.session() as session:
+            session.add(
+                OperationLog(
+                    operation_type="welcome_once",
+                    status="success",
+                    details=marker,
+                )
+            )
+
     async def has_sent_to_recipient(self, recipient_key: str) -> bool:
         async with self.session() as session:
             stmt = select(MessageLog.id).where(
@@ -248,15 +270,33 @@ class Database:
         error: str | None = None,
     ) -> None:
         async with self.session() as session:
-            session.add(
-                MessageLog(
-                    recipient_key=recipient_key,
-                    recipient_user_id=recipient_user_id,
-                    message_type=message_type,
-                    status=status,
-                    error=error,
+            stmt = select(MessageLog).where(MessageLog.recipient_key == recipient_key)
+            result = await session.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            if existing is None:
+                session.add(
+                    MessageLog(
+                        recipient_key=recipient_key,
+                        recipient_user_id=recipient_user_id,
+                        message_type=message_type,
+                        status=status,
+                        error=error,
+                    )
                 )
-            )
+                return
+
+            # Keep a successful delivery status sticky so duplicate checks remain reliable.
+            if existing.status != "sent" and status == "sent":
+                existing.status = "sent"
+            elif existing.status != "sent":
+                existing.status = status
+
+            existing.message_type = message_type
+            if recipient_user_id is not None:
+                existing.recipient_user_id = recipient_user_id
+            if error:
+                existing.error = error
 
     async def save_template(self, name: str, content: str, media_path: str | None = None) -> None:
         async with self.session() as session:

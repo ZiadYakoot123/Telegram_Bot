@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 from pathlib import Path
 
 from sqlalchemy import select, update
@@ -16,13 +18,31 @@ class SessionsManager:
     def __init__(self, database: Database) -> None:
         self.database = database
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(SESSIONS_DIR, 0o700)
+        except OSError:
+            logger.debug("Could not enforce permissions on sessions directory", exc_info=True)
+
+    @staticmethod
+    def _sanitize_session_name(session_name: str) -> str:
+        # Prevent path traversal and keep Telethon session names filesystem-safe.
+        normalized = (session_name or "").strip().replace("/", "_").replace("\\", "_")
+        normalized = re.sub(r"[^\w.-]", "_", normalized, flags=re.UNICODE)
+        normalized = normalized.lstrip(".")
+        normalized = re.sub(r"_+", "_", normalized).strip("_")
+        return normalized or "session"
 
     def session_file(self, session_name: str) -> Path:
-        safe_name = session_name.replace(" ", "_").strip()
+        safe_name = self._sanitize_session_name(session_name)
         return SESSIONS_DIR / safe_name
 
     async def sync_from_disk(self) -> None:
         session_files = list(SESSIONS_DIR.glob("*.session"))
+        for file in session_files:
+            try:
+                os.chmod(file, 0o600)
+            except OSError:
+                logger.debug("Could not enforce permissions on session file %s", file)
         names = [file.stem for file in session_files]
 
         async with self.database.session() as session:

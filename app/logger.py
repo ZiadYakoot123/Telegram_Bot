@@ -1,9 +1,23 @@
 from __future__ import annotations
 
 import logging
+import re
 from logging.handlers import RotatingFileHandler
 
 from app.config import LOG_DIR, settings
+
+
+_BOT_TOKEN_PATTERN = re.compile(r"bot\d{6,}:[A-Za-z0-9_-]{20,}")
+
+
+class RedactSecretsFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if _BOT_TOKEN_PATTERN.search(message):
+            redacted = _BOT_TOKEN_PATTERN.sub("bot<redacted>", message)
+            record.msg = redacted
+            record.args = ()
+        return True
 
 
 def setup_logging() -> None:
@@ -36,3 +50,11 @@ def setup_logging() -> None:
 
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
+
+    # Reduce exposure of sensitive URLs (bot token can appear in request URLs at INFO level).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    secret_filter = RedactSecretsFilter()
+    file_handler.addFilter(secret_filter)
+    console_handler.addFilter(secret_filter)

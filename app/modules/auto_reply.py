@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import random
+from pathlib import Path
 
 from app.clients.telegram_client import TelegramClientManager
-from app.config import settings
 from app.database import Database
 from app.utils.delays import sleep_random
 from app.utils.helpers import add_invisible_entropy, add_random_number_suffix
@@ -63,7 +64,7 @@ class AutoReplyService:
 
         await sleep_random(low, high)
 
-    async def _on_incoming_message(self, user_id: int, text: str) -> None:
+    async def _on_incoming_message(self, chat_id: int, user_id: int, text: str, is_private: bool) -> None:
         await self.database.log_interaction(user_id, "received", text)
 
         if not self.enabled:
@@ -84,12 +85,12 @@ class AutoReplyService:
             if custom_reply.reply_text:
                 reply_text = add_random_number_suffix(custom_reply.reply_text)
                 reply_with_entropy = add_invisible_entropy(reply_text)
-                await self.tg.send_text(user_id, reply_with_entropy)
+                await self.tg.send_text(chat_id, reply_with_entropy)
             
             # Send media if available
             if custom_reply.media_path:
                 try:
-                    await self.tg.send_file(user_id, custom_reply.media_path)
+                    await self.tg.send_file(chat_id, custom_reply.media_path)
                 except Exception as exc:
                     logger.error(f"Failed to send media: {exc}")
             
@@ -98,16 +99,59 @@ class AutoReplyService:
             await self.database.log_operation("send", "success", f"Auto-reply sent to {user_id}")
             return
 
-        # Fallback to default keywords from settings if no custom reply found
-        normalized = (text or "").strip().lower()
-        keywords = {kw.lower() for kw in settings.auto_reply_keywords}
-        if not any(keyword in normalized for keyword in keywords):
+        # Send the generic welcome fallback only once per user (first message).
+        if await self.database.has_welcome_once_sent(user_id, chat_id=chat_id):
             return
 
+        # Fallback behavior: send a welcome reply for any incoming message.
         await self._sleep_reply_delay()
+
+        welcome_messages = [msg for msg in await self.database.list_welcome_messages() if msg.enabled]
+        if welcome_messages:
+            selected = random.choice(welcome_messages)
+            welcome_text = (selected.content or "").strip()
+            media_path = selected.media_path
+
+            if media_path:
+                path = Path(media_path)
+                if not path.exists():
+                    logger.warning("Auto-reply welcome media not found: %s", media_path)
+                    media_path = None
+
+            if media_path:
+                caption = None
+                if welcome_text:
+                    caption = add_invisible_entropy(add_random_number_suffix(welcome_text))
+                await self.tg.send_file(chat_id, media_path, caption=caption)
+                await self.database.log_interaction(user_id, "sent", welcome_text or "[welcome_media]")
+                await self.database.log_operation(
+                    "send",
+                    "success",
+                    f"Welcome auto-reply sent chat={chat_id} user={user_id} private={int(is_private)}",
+                )
+                await self.database.mark_welcome_once_sent(user_id, chat_id=chat_id)
+                return
+
+            if welcome_text:
+                reply_with_entropy = add_invisible_entropy(add_random_number_suffix(welcome_text))
+                await self.tg.send_text(chat_id, reply_with_entropy)
+                await self.database.log_interaction(user_id, "sent", welcome_text)
+                await self.database.log_operation(
+                    "send",
+                    "success",
+                    f"Welcome auto-reply sent chat={chat_id} user={user_id} private={int(is_private)}",
+                )
+                await self.database.mark_welcome_once_sent(user_id, chat_id=chat_id)
+                return
+
+        # Final fallback when no configured welcome messages exist.
         reply_text = "اهلا بك! كيف يمكنني مساعدتك؟"
-        reply_text = add_random_number_suffix(reply_text)
-        reply_with_entropy = add_invisible_entropy(reply_text)
-        await self.tg.send_text(user_id, reply_with_entropy)
+        reply_with_entropy = add_invisible_entropy(add_random_number_suffix(reply_text))
+        await self.tg.send_text(chat_id, reply_with_entropy)
         await self.database.log_interaction(user_id, "sent", reply_text)
-        await self.database.log_operation("send", "success", f"Auto-reply sent to {user_id}")
+        await self.database.log_operation(
+            "send",
+            "success",
+            f"Auto-reply sent chat={chat_id} user={user_id} private={int(is_private)}",
+        )
+        await self.database.mark_welcome_once_sent(user_id, chat_id=chat_id)
