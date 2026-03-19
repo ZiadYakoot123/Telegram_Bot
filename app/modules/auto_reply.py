@@ -71,10 +71,8 @@ class AutoReplyService:
             return
         if await self._is_rest_mode():
             return
-
-        # Check if this user is in the allowed auto-reply list
-        if self.allowed_user_ids and user_id not in self.allowed_user_ids:
-            return
+        # NOTE: Auto-reply currently targets everyone when enabled.
+        # `allowed_user_ids` is kept for management visibility and future extensions.
 
         # First check custom replies from database
         custom_reply = await self.database.get_custom_reply_by_keyword(text)

@@ -254,6 +254,9 @@ Auto-reply delay also follows runtime delay settings (`delay_min`/`delay_max`) f
 
 Detailed guide: see [AUTO_REPLY_GUIDE.md](AUTO_REPLY_GUIDE.md)
 
+Arabic user manual: see [USER_MANUAL_AR.md](USER_MANUAL_AR.md)
+Dashboard screenshots folder: [docs/images/dashboard/](docs/images/dashboard/)
+
 ## Data and Logs
 
 - App logs: `data/logs/app.log`

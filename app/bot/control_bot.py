@@ -156,6 +156,29 @@ class ControlBot:
             return
         await update.message.reply_text(self._help_text(), reply_markup=dashboard_keyboard())
 
+    async def _reply_non_admin_notice(self, update: Update) -> None:
+        user_id = update.effective_user.id if update.effective_user else None
+        await update.effective_message.reply_text(
+            "هذا البوت مخصص للإدارة فقط.\n"
+            f"Telegram ID الخاص بك: {user_id}"
+        )
+
+    async def on_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id if update.effective_user else None
+        if not self._is_fully_authorized(user_id):
+            await self._reply_non_admin_notice(update)
+            return
+
+        await update.effective_message.reply_text("استخدم /start لفتح لوحة التحكم.")
+
+    async def on_unknown_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id if update.effective_user else None
+        if not self._is_fully_authorized(user_id):
+            await self._reply_non_admin_notice(update)
+            return
+
+        await update.effective_message.reply_text("الأمر غير معروف. استخدم /help لعرض الأوامر.")
+
     async def cmd_auth(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id if update.effective_user else None
         if not self._is_admin(user_id):
@@ -1734,6 +1757,9 @@ class ControlBot:
 
         # Main callback handler (must be last)
         self.application.add_handler(CallbackQueryHandler(self._handle_callback))
+        # Fallbacks so the bot always replies instead of appearing silent.
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text_message))
+        self.application.add_handler(MessageHandler(filters.COMMAND, self.on_unknown_command))
 
         await self.application.initialize()
         await self.application.start()

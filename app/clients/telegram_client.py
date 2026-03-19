@@ -25,10 +25,15 @@ class TelegramClientManager:
         self.database = database
         self.clients: dict[str, TelegramClient] = {}
         self.active_session: str | None = None
+        self._auto_reply_callbacks: list[Callable[[int, int, str, bool], Awaitable[None]]] = []
+        self._welcome_callbacks: list[Callable[[int, list[int]], Awaitable[None]]] = []
+        self._auto_reply_bindings: set[tuple[str, int]] = set()
+        self._welcome_bindings: set[tuple[str, int]] = set()
 
     async def start_session(self, session_name: str, session_path: Path) -> TelegramClient:
         if session_name in self.clients:
             self.active_session = session_name
+            self._bind_registered_handlers_to_session(session_name)
             return self.clients[session_name]
 
         client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
@@ -42,8 +47,86 @@ class TelegramClientManager:
 
         self.clients[session_name] = client
         self.active_session = session_name
+        self._bind_registered_handlers_to_session(session_name)
         logger.info("Telethon session started: %s", session_name)
         return client
+
+    def _bind_registered_handlers_to_session(self, session_name: str) -> None:
+        client = self.clients.get(session_name)
+        if client is None:
+            return
+
+        for callback in self._auto_reply_callbacks:
+            self._bind_auto_reply_callback_to_client(session_name, client, callback)
+
+        for callback in self._welcome_callbacks:
+            self._bind_welcome_callback_to_client(session_name, client, callback)
+
+    def _bind_auto_reply_callback_to_client(
+        self,
+        session_name: str,
+        client: TelegramClient,
+        callback: Callable[[int, int, str, bool], Awaitable[None]],
+    ) -> None:
+        from telethon import events
+
+        binding_key = (session_name, id(callback))
+        if binding_key in self._auto_reply_bindings:
+            return
+
+        async def _on_new_message(event: Any) -> None:
+            sender = await event.get_sender()
+            user_id = getattr(sender, "id", None)
+            chat_id = getattr(event, "chat_id", None)
+            text = event.raw_text or ""
+            if user_id is None or chat_id is None:
+                return
+            if bool(getattr(sender, "bot", False)):
+                return
+            await callback(int(chat_id), int(user_id), text, bool(getattr(event, "is_private", False)))
+
+        client.add_event_handler(_on_new_message, events.NewMessage(incoming=True))
+        self._auto_reply_bindings.add(binding_key)
+
+    def _bind_welcome_callback_to_client(
+        self,
+        session_name: str,
+        client: TelegramClient,
+        callback: Callable[[int, list[int]], Awaitable[None]],
+    ) -> None:
+        from telethon import events
+
+        binding_key = (session_name, id(callback))
+        if binding_key in self._welcome_bindings:
+            return
+
+        async def _on_chat_action(event: Any) -> None:
+            if not (getattr(event, "user_joined", False) or getattr(event, "user_added", False)):
+                return
+
+            chat_id = getattr(event, "chat_id", None)
+            if chat_id is None:
+                return
+
+            user_ids: list[int] = []
+            users = getattr(event, "users", None) or []
+            for user in users:
+                uid = getattr(user, "id", None)
+                if uid is not None:
+                    user_ids.append(int(uid))
+
+            if not user_ids:
+                single_user_id = getattr(event, "user_id", None)
+                if single_user_id is not None:
+                    user_ids.append(int(single_user_id))
+
+            if not user_ids:
+                return
+
+            await callback(int(chat_id), user_ids)
+
+        client.add_event_handler(_on_chat_action, events.ChatAction())
+        self._welcome_bindings.add(binding_key)
 
     async def stop_all(self) -> None:
         for name, client in list(self.clients.items()):
@@ -147,52 +230,18 @@ class TelegramClientManager:
         self,
         callback: Callable[[int, int, str, bool], Awaitable[None]],
     ) -> None:
-        from telethon import events
+        if callback not in self._auto_reply_callbacks:
+            self._auto_reply_callbacks.append(callback)
 
-        client = self.get_active_client()
-
-        @client.on(events.NewMessage(incoming=True))
-        async def _on_new_message(event: Any) -> None:
-            sender = await event.get_sender()
-            user_id = getattr(sender, "id", None)
-            chat_id = getattr(event, "chat_id", None)
-            text = event.raw_text or ""
-            if user_id is None or chat_id is None:
-                return
-            if bool(getattr(sender, "bot", False)):
-                return
-            await callback(int(chat_id), int(user_id), text, bool(getattr(event, "is_private", False)))
+        for session_name, client in self.clients.items():
+            self._bind_auto_reply_callback_to_client(session_name, client, callback)
 
     async def bind_welcome_handler(self, callback: Callable[[int, list[int]], Awaitable[None]]) -> None:
-        from telethon import events
+        if callback not in self._welcome_callbacks:
+            self._welcome_callbacks.append(callback)
 
-        client = self.get_active_client()
-
-        @client.on(events.ChatAction())
-        async def _on_chat_action(event: Any) -> None:
-            if not (getattr(event, "user_joined", False) or getattr(event, "user_added", False)):
-                return
-
-            chat_id = getattr(event, "chat_id", None)
-            if chat_id is None:
-                return
-
-            user_ids: list[int] = []
-            users = getattr(event, "users", None) or []
-            for user in users:
-                uid = getattr(user, "id", None)
-                if uid is not None:
-                    user_ids.append(int(uid))
-
-            if not user_ids:
-                single_user_id = getattr(event, "user_id", None)
-                if single_user_id is not None:
-                    user_ids.append(int(single_user_id))
-
-            if not user_ids:
-                return
-
-            await callback(int(chat_id), user_ids)
+        for session_name, client in self.clients.items():
+            self._bind_welcome_callback_to_client(session_name, client, callback)
 
     async def fetch_recent_dialog_interactions(self, days: int = 30) -> list[dict[str, Any]]:
         client = self.get_active_client()
